@@ -7,19 +7,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 st.set_page_config(page_title="Advanced KuCoin Scanner", page_icon="⚡", layout="wide")
 
 st.title("⚡ Advanced KuCoin Hidden Divergence Scanner")
-st.markdown("Automated scanner with RSI filters and parallel processing for **500+ USDT pairs**.")
 
 KUCOIN_BASE_URL = "https://api.kucoin.com"
 
 @st.cache_data(ttl=300)
 def fetch_all_usdt_pairs():
-    """KuCoin se tamaam active USDT pairs fetch karta hai"""
     try:
         url = f"{KUCOIN_BASE_URL}/api/v1/symbols"
         res = requests.get(url, timeout=10).json()
         if res['code'] == '200000':
-            symbols = [item['symbol'] for item in res['data'] if item['symbol'].endswith('-USDT') and item['enableTrading']]
-            return symbols
+            return [item['symbol'] for item in res['data'] if item['symbol'].endswith('-USDT') and item['enableTrading']]
     except Exception as e:
         st.error(f"Error fetching symbols: {e}")
     return []
@@ -43,7 +40,6 @@ def get_klines_data(symbol, timeframe):
     return None
 
 def process_coin(symbol, timeframe, rsi_min, rsi_max, signal_filter):
-    """Har coin ka data aur RSI divergence analyze karta hai"""
     df = get_klines_data(symbol, timeframe)
     if df is None or len(df) < 30:
         return None
@@ -54,11 +50,9 @@ def process_coin(symbol, timeframe, rsi_min, rsi_max, signal_filter):
     current_rsi = df['rsi'].iloc[-1]
     current_price = df['close'].iloc[-1]
 
-    # Check RSI range filter
     if not (rsi_min <= current_rsi <= rsi_max):
         return None
 
-    # Structural points check for divergence
     p_low1, p_low2 = df['low'].iloc[-12], df['low'].iloc[-1]
     rsi_low1, rsi_low2 = df['rsi'].iloc[-12], df['rsi'].iloc[-1]
 
@@ -76,21 +70,19 @@ def process_coin(symbol, timeframe, rsi_min, rsi_max, signal_filter):
             return None
 
         return {
-            "symbol": symbol,
-            "signal": signal,
-            "price": current_price,
-            "rsi": round(current_rsi, 2),
-            "prev_price_low": round(p_low1, 4),
-            "curr_price_low": round(p_low2, 4),
-            "prev_rsi": round(rsi_low1, 2),
-            "curr_rsi": round(rsi_low2, 2)
+            "Symbol": symbol,
+            "Signal": signal,
+            "Price": f"${current_price}",
+            "RSI": round(current_rsi, 2),
+            "Price Structure": f"{round(p_low1, 4)} ➔ {round(p_low2, 4)}",
+            "RSI Structure": f"{round(rsi_low1, 1)} ➔ {round(rsi_low2, 1)}"
         }
 
     return None
 
 # Sidebar Controls
 st.sidebar.header("⚙️ Scanner Settings")
-timeframe = st.sidebar.selectbox("Select Timeframe:", ["15m", "1h", "4h", "1d"], index=1)
+timeframe = st.sidebar.selectbox("Select Timeframe:", ["15m", "1h", "4h", "1d"], index=0)
 coin_limit = st.sidebar.slider("Number of Coins to Scan:", min_value=50, max_value=600, value=500, step=50)
 
 st.sidebar.subheader("🎯 RSI Filters")
@@ -101,13 +93,12 @@ if st.button("⚡ Start Advanced Market Scan"):
     all_pairs = fetch_all_usdt_pairs()
     scan_list = all_pairs[:coin_limit]
 
-    st.info(f"Scanning total **{len(scan_list)}** USDT pairs on KuCoin ({timeframe} timeframe)...")
+    st.info(f"Scanning **{len(scan_list)}** USDT pairs on KuCoin ({timeframe})...")
     progress_bar = st.progress(0)
     
     results = []
     completed = 0
 
-    # Multi-threading for fast processing of 500+ coins
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {
             executor.submit(
@@ -125,20 +116,14 @@ if st.button("⚡ Start Advanced Market Scan"):
     progress_bar.empty()
 
     if results:
-        st.success(f"🔍 **{len(results)}** Matching Divergence Signals Found!")
+        st.success(f"🔍 **{len(results)}** Signals Found!")
         
-        # Display coins individually in custom UI Cards
-        for item in results:
-            with st.expander(f"📌 **{item['symbol']}** — {item['signal']} (RSI: {item['rsi']})", expanded=True):
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Current Price", f"${item['price']}")
-                col2.metric("Current RSI", item['rsi'])
-                col3.metric("Signal Type", item['signal'])
-                col4.metric("Timeframe", timeframe)
-
-                st.markdown(
-                    f"**Structure Detail:** Price Lows: (`{item['prev_price_low']}` ➔ `{item['curr_price_low']}`) | "
-                    f"RSI Lows: (`{item['prev_rsi']}` ➔ `{item['curr_rsi']}`)"
-                )
+        # Compact Data Table Format
+        df_results = pd.DataFrame(results)
+        st.dataframe(
+            df_results, 
+            use_container_width=True, 
+            hide_index=True
+        )
     else:
         st.warning("Selected RSI Range aur Filters ke mutabiq koi coin nahi mila.")
