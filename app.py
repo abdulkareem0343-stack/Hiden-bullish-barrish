@@ -1,27 +1,30 @@
 import streamlit as st
 import pandas as pd
 import requests
+from ta.momentum import RSIIndicator
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Page Configuration
-st.set_page_config(page_title="KuCoin Divergence Scanner", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Advanced KuCoin Scanner", page_icon="⚡", layout="wide")
 
-st.title("📈 KuCoin Hidden Divergence Scanner")
-st.write("Yeh app KuCoin par **Hidden Bullish** aur **Hidden Bearish** divergence detect karti hai.")
+st.title("⚡ Advanced KuCoin Hidden Divergence Scanner")
+st.markdown("Automated scanner with RSI filters and parallel processing for **500+ USDT pairs**.")
 
 KUCOIN_BASE_URL = "https://api.kucoin.com"
 
 @st.cache_data(ttl=300)
-def get_usdt_pairs():
+def fetch_all_usdt_pairs():
+    """KuCoin se tamaam active USDT pairs fetch karta hai"""
     try:
         url = f"{KUCOIN_BASE_URL}/api/v1/symbols"
         res = requests.get(url, timeout=10).json()
         if res['code'] == '200000':
-            return [item['symbol'] for item in res['data'] if item['symbol'].endswith('-USDT') and item['enableTrading']]
+            symbols = [item['symbol'] for item in res['data'] if item['symbol'].endswith('-USDT') and item['enableTrading']]
+            return symbols
     except Exception as e:
         st.error(f"Error fetching symbols: {e}")
     return []
 
-def get_klines(symbol, timeframe="1h"):
+def get_klines_data(symbol, timeframe):
     tf_map = {"15m": "15min", "1h": "1hour", "4h": "4hour", "1d": "1day"}
     type_param = tf_map.get(timeframe, "1hour")
     url = f"{KUCOIN_BASE_URL}/api/v1/market/candles?symbol={symbol}&type={type_param}"
@@ -39,60 +42,103 @@ def get_klines(symbol, timeframe="1h"):
         return None
     return None
 
-def calculate_rsi(df, period=14):
-    delta = df['close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    rs = gain / loss
-    df['rsi'] = 100 - (100 / (1 + rs))
-    return df
-
-def find_divergence(df):
+def process_coin(symbol, timeframe, rsi_min, rsi_max, signal_filter):
+    """Har coin ka data aur RSI divergence analyze karta hai"""
+    df = get_klines_data(symbol, timeframe)
     if df is None or len(df) < 30:
         return None
 
-    # Compare recent lows/highs for hidden divergence
-    p_low1, p_low2 = df['low'].iloc[-10], df['low'].iloc[-1]
-    rsi_low1, rsi_low2 = df['rsi'].iloc[-10], df['rsi'].iloc[-1]
+    rsi_series = RSIIndicator(close=df['close'], window=14).rsi()
+    df['rsi'] = rsi_series
 
-    p_high1, p_high2 = df['high'].iloc[-10], df['high'].iloc[-1]
-    rsi_high1, rsi_high2 = df['rsi'].iloc[-10], df['rsi'].iloc[-1]
+    current_rsi = df['rsi'].iloc[-1]
+    current_price = df['close'].iloc[-1]
 
-    # Hidden Bullish: Higher Low in Price, Lower Low in RSI
+    # Check RSI range filter
+    if not (rsi_min <= current_rsi <= rsi_max):
+        return None
+
+    # Structural points check for divergence
+    p_low1, p_low2 = df['low'].iloc[-12], df['low'].iloc[-1]
+    rsi_low1, rsi_low2 = df['rsi'].iloc[-12], df['rsi'].iloc[-1]
+
+    p_high1, p_high2 = df['high'].iloc[-12], df['high'].iloc[-1]
+    rsi_high1, rsi_high2 = df['rsi'].iloc[-12], df['rsi'].iloc[-1]
+
+    signal = None
     if (p_low2 > p_low1) and (rsi_low2 < rsi_low1):
-        return "Hidden Bullish 🟢"
+        signal = "Hidden Bullish 🟢"
+    elif (p_high2 < p_high1) and (rsi_high2 > rsi_high1):
+        signal = "Hidden Bearish 🔴"
 
-    # Hidden Bearish: Lower High in Price, Higher High in RSI
-    if (p_high2 < p_high1) and (rsi_high2 > rsi_high1):
-        return "Hidden Bearish 🔴"
+    if signal:
+        if signal_filter != "All" and signal_filter not in signal:
+            return None
+
+        return {
+            "symbol": symbol,
+            "signal": signal,
+            "price": current_price,
+            "rsi": round(current_rsi, 2),
+            "prev_price_low": round(p_low1, 4),
+            "curr_price_low": round(p_low2, 4),
+            "prev_rsi": round(rsi_low1, 2),
+            "curr_rsi": round(rsi_low2, 2)
+        }
 
     return None
 
-# User Controls
-timeframe = st.selectbox("Select Timeframe:", ["15m", "1h", "4h", "1d"], index=1)
-limit = st.slider("Kitne pairs scan karne hain?", min_value=10, max_value=100, value=30, step=10)
+# Sidebar Controls
+st.sidebar.header("⚙️ Scanner Settings")
+timeframe = st.sidebar.selectbox("Select Timeframe:", ["15m", "1h", "4h", "1d"], index=1)
+coin_limit = st.sidebar.slider("Number of Coins to Scan:", min_value=50, max_value=600, value=500, step=50)
 
-if st.button("🚀 Scan Market Now"):
-    with st.spinner("KuCoin Pairs Scan ho rahe hain... Bas 10-15 seconds rukien."):
-        pairs = get_usdt_pairs()[:limit]
-        results = []
+st.sidebar.subheader("🎯 RSI Filters")
+rsi_range = st.sidebar.slider("RSI Range Filter:", 0, 100, (30, 70))
+signal_type = st.sidebar.radio("Signal Type Filter:", ["All", "Bullish", "Bearish"])
 
-        for symbol in pairs:
-            df = get_klines(symbol, timeframe)
-            if df is not None and not df.empty:
-                df = calculate_rsi(df)
-                signal = find_divergence(df)
-                if signal:
-                    results.append({
-                        "Symbol": symbol,
-                        "Signal": signal,
-                        "Price (USDT)": df['close'].iloc[-1],
-                        "RSI": round(df['rsi'].iloc[-1], 2)
-                    })
+if st.button("⚡ Start Advanced Market Scan"):
+    all_pairs = fetch_all_usdt_pairs()
+    scan_list = all_pairs[:coin_limit]
 
-        if results:
-            res_df = pd.DataFrame(results)
-            st.success(f"Scan complete! {len(results)} signals mile hain:")
-            st.dataframe(res_df, use_container_width=True)
-        else:
-            st.warning("Is waqt kisi coin par Hidden Divergence signal nahi mila.")
+    st.info(f"Scanning total **{len(scan_list)}** USDT pairs on KuCoin ({timeframe} timeframe)...")
+    progress_bar = st.progress(0)
+    
+    results = []
+    completed = 0
+
+    # Multi-threading for fast processing of 500+ coins
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {
+            executor.submit(
+                process_coin, symbol, timeframe, rsi_range[0], rsi_range[1], signal_type
+            ): symbol for symbol in scan_list
+        }
+
+        for future in as_completed(futures):
+            res = future.result()
+            if res:
+                results.append(res)
+            completed += 1
+            progress_bar.progress(completed / len(scan_list))
+
+    progress_bar.empty()
+
+    if results:
+        st.success(f"🔍 **{len(results)}** Matching Divergence Signals Found!")
+        
+        # Display coins individually in custom UI Cards
+        for item in results:
+            with st.expander(f"📌 **{item['symbol']}** — {item['signal']} (RSI: {item['rsi']})", expanded=True):
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("Current Price", f"${item['price']}")
+                col2.metric("Current RSI", item['rsi'])
+                col3.metric("Signal Type", item['signal'])
+                col4.metric("Timeframe", timeframe)
+
+                st.markdown(
+                    f"**Structure Detail:** Price Lows: (`{item['prev_price_low']}` ➔ `{item['curr_price_low']}`) | "
+                    f"RSI Lows: (`{item['prev_rsi']}` ➔ `{item['curr_rsi']}`)"
+                )
+    else:
+        st.warning("Selected RSI Range aur Filters ke mutabiq koi coin nahi mila.")
