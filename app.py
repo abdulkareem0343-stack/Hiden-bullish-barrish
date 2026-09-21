@@ -63,6 +63,21 @@ st.title("⚡ KuCoin Hidden Divergence Scanner")
 
 KUCOIN_BASE_URL = "https://api.kucoin.com"
 
+# --- TELEGRAM FUNCTION ---
+def send_telegram_msg(bot_token, chat_id, message):
+    if not bot_token or not chat_id:
+        return
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "Markdown"
+    }
+    try:
+        requests.post(url, data=payload, timeout=5)
+    except Exception:
+        pass
+
 @st.cache_data(ttl=300)
 def fetch_all_usdt_pairs():
     try:
@@ -135,14 +150,22 @@ def process_coin(symbol, timeframe, rsi_min, rsi_max, signal_filter):
 
     return None
 
-# Sidebar Controls
-st.sidebar.header("⚙️ Scanner Settings")
-timeframe = st.sidebar.selectbox("Select Timeframe:", ["15m", "1h", "4h", "1d"], index=0)
-coin_limit = st.sidebar.slider("Number of Coins to Scan:", min_value=50, max_value=600, value=500, step=50)
+# MAIN SCREEN CONTROLS
+st.subheader("⚙️ Scanner Settings")
+col1, col2 = st.columns(2)
+with col1:
+    timeframe = st.selectbox("Select Timeframe:", ["15m", "1h", "4h", "1d"], index=0)
+with col2:
+    coin_limit = st.slider("Coins to Scan:", min_value=50, max_value=600, value=500, step=50)
 
-st.sidebar.subheader("🎯 RSI Filters")
-rsi_range = st.sidebar.slider("RSI Range Filter:", 0, 100, (30, 70))
-signal_type = st.sidebar.radio("Signal Type Filter:", ["All", "Bullish", "Bearish"])
+rsi_range = st.slider("RSI Range Filter:", 0, 100, (30, 70))
+signal_type = st.radio("Signal Filter:", ["All", "Bullish", "Bearish"], horizontal=True)
+
+# TELEGRAM SETTINGS ON MAIN PAGE
+with st.expander("📲 Telegram Alert Settings (Click to Open)", expanded=True):
+    tg_token = st.text_input("Bot Token:", type="password")
+    tg_chat_id = st.text_input("Chat ID:", value="6455899997")
+    send_tg_alerts = st.checkbox("Send Alerts to Telegram")
 
 if st.button("⚡ Start Market Scan"):
     all_pairs = fetch_all_usdt_pairs()
@@ -173,7 +196,6 @@ if st.button("⚡ Start Market Scan"):
     if results:
         st.success(f"🔍 **{len(results)}** Signals Found!")
         
-        # Render Compact HTML Cards
         for item in results:
             signal_class = "signal-bullish" if "Bullish" in item['signal'] else "signal-bearish"
             card_html = f"""
@@ -192,5 +214,17 @@ if st.button("⚡ Start Market Scan"):
             </div>
             """
             st.markdown(card_html, unsafe_allow_html=True)
+
+            if send_tg_alerts and tg_token and tg_chat_id:
+                msg = (
+                    f"🚨 *NEW SIGNAL DETECTED*\n\n"
+                    f"📌 *Coin:* `{item['symbol']}`\n"
+                    f"🎯 *Signal:* {item['signal']}\n"
+                    f"💵 *Price:* ${item['price']}\n"
+                    f"📊 *RSI:* {item['rsi']}\n"
+                    f"⏱️ *Timeframe:* {timeframe}"
+                )
+                send_telegram_msg(tg_token, tg_chat_id, msg)
+
     else:
         st.warning("Selected RSI Range aur Filters ke mutabiq koi coin nahi mila.")
