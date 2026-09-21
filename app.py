@@ -6,7 +6,60 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 st.set_page_config(page_title="Advanced KuCoin Scanner", page_icon="⚡", layout="wide")
 
-st.title("⚡ Advanced KuCoin Hidden Divergence Scanner")
+# Custom CSS for compact card design
+st.markdown("""
+<style>
+    .coin-card {
+        background-color: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 8px;
+        padding: 10px 14px;
+        margin-bottom: 10px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .coin-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 6px;
+    }
+    .coin-symbol {
+        font-size: 15px;
+        font-weight: bold;
+        color: #1e1e1e;
+    }
+    .signal-bullish {
+        background-color: #e6f4ea;
+        color: #137333;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 12px;
+    }
+    .signal-bearish {
+        background-color: #fce8e6;
+        color: #c5221f;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 12px;
+    }
+    .coin-details {
+        font-size: 13px;
+        color: #4a4a4a;
+        margin-bottom: 4px;
+    }
+    .coin-struct {
+        font-size: 11px;
+        color: #707070;
+        border-top: 1px dashed #dedede;
+        padding-top: 4px;
+        margin-top: 4px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+st.title("⚡ KuCoin Hidden Divergence Scanner")
 
 KUCOIN_BASE_URL = "https://api.kucoin.com"
 
@@ -70,12 +123,14 @@ def process_coin(symbol, timeframe, rsi_min, rsi_max, signal_filter):
             return None
 
         return {
-            "Symbol": symbol,
-            "Signal": signal,
-            "Price": f"${current_price}",
-            "RSI": round(current_rsi, 2),
-            "Price Structure": f"{round(p_low1, 4)} ➔ {round(p_low2, 4)}",
-            "RSI Structure": f"{round(rsi_low1, 1)} ➔ {round(rsi_low2, 1)}"
+            "symbol": symbol,
+            "signal": signal,
+            "price": current_price,
+            "rsi": round(current_rsi, 2),
+            "p_low1": round(p_low1, 4),
+            "p_low2": round(p_low2, 4),
+            "rsi_low1": round(rsi_low1, 1),
+            "rsi_low2": round(rsi_low2, 1)
         }
 
     return None
@@ -89,11 +144,11 @@ st.sidebar.subheader("🎯 RSI Filters")
 rsi_range = st.sidebar.slider("RSI Range Filter:", 0, 100, (30, 70))
 signal_type = st.sidebar.radio("Signal Type Filter:", ["All", "Bullish", "Bearish"])
 
-if st.button("⚡ Start Advanced Market Scan"):
+if st.button("⚡ Start Market Scan"):
     all_pairs = fetch_all_usdt_pairs()
     scan_list = all_pairs[:coin_limit]
 
-    st.info(f"Scanning **{len(scan_list)}** USDT pairs on KuCoin ({timeframe})...")
+    st.info(f"Scanning **{len(scan_list)}** USDT pairs ({timeframe})...")
     progress_bar = st.progress(0)
     
     results = []
@@ -118,12 +173,24 @@ if st.button("⚡ Start Advanced Market Scan"):
     if results:
         st.success(f"🔍 **{len(results)}** Signals Found!")
         
-        # Compact Data Table Format
-        df_results = pd.DataFrame(results)
-        st.dataframe(
-            df_results, 
-            use_container_width=True, 
-            hide_index=True
-        )
+        # Render Compact HTML Cards
+        for item in results:
+            signal_class = "signal-bullish" if "Bullish" in item['signal'] else "signal-bearish"
+            card_html = f"""
+            <div class="coin-card">
+                <div class="coin-header">
+                    <span class="coin-symbol">📌 {item['symbol']}</span>
+                    <span class="{signal_class}">{item['signal']}</span>
+                </div>
+                <div class="coin-details">
+                    <b>Price:</b> ${item['price']} &nbsp;|&nbsp; <b>RSI:</b> {item['rsi']}
+                </div>
+                <div class="coin-struct">
+                    <b>Price Structure:</b> {item['p_low1']} ➔ {item['p_low2']} &nbsp;|&nbsp; 
+                    <b>RSI Structure:</b> {item['rsi_low1']} ➔ {item['rsi_low2']}
+                </div>
+            </div>
+            """
+            st.markdown(card_html, unsafe_allow_html=True)
     else:
         st.warning("Selected RSI Range aur Filters ke mutabiq koi coin nahi mila.")
